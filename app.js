@@ -1,20 +1,29 @@
 //We load the dotenv library and call the config method, which loads the variables into the process.env
-require("dotenv").config();
+// require("dotenv").config();
 const express = require("express");
 const bodyParser = require("body-parser");
 const ejs = require("ejs");
 const mongoose = require("mongoose");
-// const encrypt = require("mongoose-encryption");
-// const md5 = require("md5");
-const bcrypt = require("bcrypt");
-const saltRounds = 10;
+const session = require("express-session");
+const passport = require("passport");
+const passportLocalMongoose = require("passport-local-mongoose");
 
 const app = express();
 
-app.use(bodyParser.urlencoded({ extended: true }));
-app.set("view engine", "ejs");
 app.use(express.static("public"));
+app.set("view engine", "ejs");
+app.use(bodyParser.urlencoded({ extended: true }));
 
+app.use(session({                   //Initializing the session 
+    secret: "Our Little Secret.",
+    resave: false,
+    saveUninitialized: false
+}));
+
+// initialize is a method that comes bundled with passport and sets up passport for us to start using it for authentication.
+app.use(passport.initialize());
+app.use(passport.session());
+// Tell the app to use passport to also setup/manage our session.
 
 mongoose.connect("mongodb://localhost:27017/userDB");
 
@@ -23,10 +32,20 @@ const userSchema = new mongoose.Schema({
     password: String
 });
 
-// userSchema.plugin(encrypt, {secret: process.env.SECRET, encryptedFields: ["password"]});
+userSchema.plugin(passportLocalMongoose);
+/* "passportLocalMongoose" is going to used to hash and salt our passwords and to save our users into our MongoDB database.
+It's going to do a lot of heavy lifting for us.*/
 
 const User = mongoose.model("User", userSchema);
 
+//Using passport-local-mongoose to create a local strategy
+passport.use(User.createStrategy());
+
+//Serialize and deserialize is only necessary when we are using sessions.
+passport.serializeUser(User.serializeUser());
+//Serialize the user creates identiciication and stuffs into the cookie.
+passport.deserializeUser(User.deserializeUser());
+//Deserialize the user allows the passport to be able to look into cookies and look who the user is by authenication.
 app.get("/", function (req, res) {
     res.render("home");
 });
@@ -39,43 +58,54 @@ app.get("/login", function (req, res) {
     res.render("login");
 });
 
-app.post("/register", function (req, res) {
+app.get("/secrets", function (req, res) {
 
-    bcrypt.hash(req.body.password, saltRounds, function (err, hash) {
-        // Store hash in your password DB.
-        const newUser = new User({
-            email: req.body.username,
-            password: hash
-        });
-
-        newUser.save(function (err) {
-            if (!err) {
-                res.render("secrets");
-            } else {
-                console.log(err);
-            }
-        });
-    });
+    //if the request (username, password) is authenicated, then render the secrets page
+    if (req.isAuthenticated()) {
+        res.render("secrets");
+    } else {
+        res.redirect("/login");
+    }
 
 });
 
-app.post("/login", function (req, res) {
-    const email = req.body.username;
-    const password = req.body.password;
+app.get("/logout", function(req, res){
+    req.logout();
+    res.redirect("/");
+});
 
-    User.findOne({ email: email }, function (err, foundResult) {
-        if (!err) {
-            if (foundResult) {
-                bcrypt.compare(password, foundResult.password, function (err, result) {
-                    if (result === true) {
-                        res.render("secrets");
-                    } else {
-                        console.log("Please Try Again");
-                    }
-                });
-            }
-        } else {
+app.post("/register", function (req, res) {
+    User.register({ username: req.body.username }, req.body.password, function (err, user) {
+        if (err) {
             console.log(err);
+            res.redirect("/register");
+        } else {
+            // passport.authenticate is to authenicate the user and the type of authentication that we're performing is local. And then once we've authenticated them, we're going to again open a set of parentheses and we're going to pass in req, res and a callback.And this callback is only triggered if the authentication was successful and we managed to successfully setup a cookie that saved their current logged in session so will you have to check to see if they're logged in or not. 
+            passport.authenticate("local")(req, res, function () {
+                res.redirect("/secrets");
+            })
+        }
+    });
+});
+
+app.post("/login", function (req, res) {
+    const user = new User({
+        username: req.body.username,
+        password: req.body.password
+    });
+
+    req.login(user, function (err) {
+        if (err) {
+            console.log(err);
+        } else {
+
+            /**If there were no errors then we're going to authenticate our user so it means that they've successfully logged in and we're going to call passport.authenticate and we're going to use the local strategy. */
+
+            passport.authenticate("local")(req, res, function () {
+                res.redirect("/secrets");
+
+                /**Our user is authenicated using their password and username. And if we've successfully authenticated them then again we're going to redirect them to the secrets route, where we of course check whether if they are indeed authenticated or not. So both when they've successfully registered and when they've successfully logged in using the right credentials, we're going to send a cookie and tell the browser to hold onto that cookie because the cookie has a few pieces of information that tells our server about the user, namely that they are authorized to view any of the pages that require authentication. */
+            });
         }
     });
 });
