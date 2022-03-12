@@ -1,5 +1,5 @@
 //We load the dotenv library and call the config method, which loads the variables into the process.env
-// require("dotenv").config();
+require("dotenv").config();
 const express = require("express");
 const bodyParser = require("body-parser");
 const ejs = require("ejs");
@@ -7,6 +7,8 @@ const mongoose = require("mongoose");
 const session = require("express-session");
 const passport = require("passport");
 const passportLocalMongoose = require("passport-local-mongoose");
+const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const findOrCreate = require('mongoose-findorcreate');
 
 const app = express();
 
@@ -14,7 +16,8 @@ app.use(express.static("public"));
 app.set("view engine", "ejs");
 app.use(bodyParser.urlencoded({ extended: true }));
 
-app.use(session({                   //Initializing the session 
+//Initializing the session
+app.use(session({
     secret: "Our Little Secret.",
     resave: false,
     saveUninitialized: false
@@ -29,26 +32,74 @@ mongoose.connect("mongodb://localhost:27017/userDB");
 
 const userSchema = new mongoose.Schema({
     email: String,
-    password: String
+    password: String,
+    googleId: String
 });
 
 userSchema.plugin(passportLocalMongoose);
 /* "passportLocalMongoose" is going to used to hash and salt our passwords and to save our users into our MongoDB database.
 It's going to do a lot of heavy lifting for us.*/
 
+userSchema.plugin(findOrCreate);
+
 const User = mongoose.model("User", userSchema);
 
 //Using passport-local-mongoose to create a local strategy
 passport.use(User.createStrategy());
 
+/** Supports session for local strategy 
 //Serialize and deserialize is only necessary when we are using sessions.
 passport.serializeUser(User.serializeUser());
 //Serialize the user creates identiciication and stuffs into the cookie.
 passport.deserializeUser(User.deserializeUser());
 //Deserialize the user allows the passport to be able to look into cookies and look who the user is by authenication.
+*/
+
+// Support sessions for all authentication strategies - Third party OAuth 
+passport.serializeUser(function(user, cb) {
+    process.nextTick(function() {
+      cb(null, { id: user.id, username: user.username });
+    });
+  });
+  
+  passport.deserializeUser(function(user, cb) {
+    process.nextTick(function() {
+      return cb(null, user);
+    });
+  });
+
+//Passport Google Strategy
+passport.use(new GoogleStrategy({
+    //Passing all these options helps google to recognise our app which was setup in Google API dashboard
+    clientID: process.env.CLIENT_ID,
+    clientSecret: process.env.CLIENT_SECRET,
+    callbackURL: "http://localhost:3000/auth/google/secrets"
+},
+    function (accessToken, refreshToken, profile, cb) {
+        //findorCreate is a pseudo/fake code created by passport which does nothing but to make it work there is package "findorCreate"
+        User.findOrCreate({ googleId: profile.id }, function (err, user) {
+            return cb(err, user);
+        });
+    }
+));
+
 app.get("/", function (req, res) {
     res.render("home");
 });
+
+app.get("/auth/google",
+    passport.authenticate('google', { scope: ["profile"] }));
+/*Use the passport to autheniticate user using google strategy and scope - check for their email and id on google servers.
+This code is enough for the pop-up of google-sign and check authentication*/
+
+/*After Google Authentication, google makes GET request to this route to redirect the user 
+which should match the mentioned route URL in Google API dashboard*/
+app.get("/auth/google/secrets", 
+  passport.authenticate('google', { failureRedirect: "/login" }),
+  function(req, res) {
+    // Successful authentication, redirect to secrets.
+    res.redirect('/secrets');
+  });
 
 app.get("/register", function (req, res) {
     res.render("register");
@@ -69,7 +120,7 @@ app.get("/secrets", function (req, res) {
 
 });
 
-app.get("/logout", function(req, res){
+app.get("/logout", function (req, res) {
     req.logout();
     res.redirect("/");
 });
