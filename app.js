@@ -33,7 +33,8 @@ mongoose.connect("mongodb://localhost:27017/userDB");
 const userSchema = new mongoose.Schema({
     email: String,
     password: String,
-    googleId: String
+    googleId: String,
+    secret: String
 });
 
 userSchema.plugin(passportLocalMongoose);
@@ -56,17 +57,17 @@ passport.deserializeUser(User.deserializeUser());
 */
 
 // Support sessions for all authentication strategies - Third party OAuth 
-passport.serializeUser(function(user, cb) {
-    process.nextTick(function() {
-      cb(null, { id: user.id, username: user.username });
+passport.serializeUser(function (user, cb) {
+    process.nextTick(function () {
+        cb(null, { id: user.id, username: user.username });
     });
-  });
-  
-  passport.deserializeUser(function(user, cb) {
-    process.nextTick(function() {
-      return cb(null, user);
+});
+
+passport.deserializeUser(function (user, cb) {
+    process.nextTick(function () {
+        return cb(null, user);
     });
-  });
+});
 
 //Passport Google Strategy
 passport.use(new GoogleStrategy({
@@ -94,12 +95,12 @@ This code is enough for the pop-up of google-sign and check authentication*/
 
 /*After Google Authentication, google makes GET request to this route to redirect the user 
 which should match the mentioned route URL in Google API dashboard*/
-app.get("/auth/google/secrets", 
-  passport.authenticate('google', { failureRedirect: "/login" }),
-  function(req, res) {
-    // Successful authentication, redirect to secrets.
-    res.redirect('/secrets');
-  });
+app.get("/auth/google/secrets",
+    passport.authenticate('google', { failureRedirect: "/login" }),
+    function (req, res) {
+        // Successful authentication, redirect to secrets.
+        res.redirect('/secrets');
+    });
 
 app.get("/register", function (req, res) {
     res.render("register");
@@ -109,15 +110,44 @@ app.get("/login", function (req, res) {
     res.render("login");
 });
 
+//Allow anyone to see secrets of everyone, so remove authentication for this route
 app.get("/secrets", function (req, res) {
+    //Find the users who's secret field is not equal to null
+    User.find({ secret: { $ne: null } }, function (err, foundUsers) {
+        if (err) {
+            console.log(err);
+        } else {
+            if (foundUsers) {
+                res.render("secrets", { usersWithSecrets: foundUsers });
+            }
+        }
+    });
+});
 
-    //if the request (username, password) is authenicated, then render the secrets page
+app.get("/submit", function (req, res) {
+    //if the request (username, password) is authenicated, then render the submit page
     if (req.isAuthenticated()) {
-        res.render("secrets");
+        res.render("submit");
     } else {
         res.redirect("/login");
     }
+});
 
+app.post("/submit", function (req, res) {
+    const submittedSecret = req.body.secret;
+
+    User.findById(req.user.id, function (err, foundUser) {
+        if (err) {
+            console.log(err);
+        } else {
+            if (foundUser) {
+                foundUser.secret = submittedSecret;
+                foundUser.save(function () {
+                    res.redirect("/secrets");
+                });
+            }
+        }
+    });
 });
 
 app.get("/logout", function (req, res) {
